@@ -15,6 +15,9 @@ NearDB = NearDB or {
 -- Frame for event handling
 local frame = CreateFrame("Frame")
 
+-- Database connection
+local db = nil
+
 -- Display frames
 local enemyDisplayFrame = nil
 local friendlyDisplayFrame = nil
@@ -29,21 +32,31 @@ local UPDATE_INTERVAL = 0.1 -- Update 10 times per second
 local function Initialize()
     print("|cFF00FF00Near|r " .. VERSION .. " loaded. Type |cFFFFFF00/ne|r (enemies) or |cFFFFFF00/nf|r (players).")
     
-    -- Initialize AzerothDB tables
+    -- Initialize AzerothDB connection
     if AzerothDB then
-        -- Create nameplates table with GUID as primary key (only if it doesn't exist)
-        if not AzerothDB._tables["nameplates"] then
-            AzerothDB:CreateTable("nameplates", "guid")
-            AzerothDB:CreateIndex("nameplates", "name")
-            AzerothDB:CreateIndex("nameplates", "unitType")
-        end
+        db = AzerothDB:CreateConnection("near")
         
-        -- Create metadata table for tracking (only if it doesn't exist)
-        if not AzerothDB._tables["metadata"] then
-            AzerothDB:CreateTable("metadata", "key")
+        if db then
+            -- Create nameplates table with GUID as primary key
+            db:CreateTable("nameplates", {
+                guid = {type = "string", primary = true},
+                name = {type = "string", required = true},
+                unitType = {type = "string"},
+                level = {type = "number", default = 0},
+                isPlayer = {type = "boolean", default = false},
+                firstSeen = {type = "number"},
+                lastSeen = {type = "number"},
+                seenCount = {type = "number", default = 0}
+            })
+            
+            -- Create indexes for fast lookups
+            db:CreateIndex("nameplates", "name")
+            db:CreateIndex("nameplates", "unitType")
+            
+            print("|cFF00FF00Near|r AzerothDB integration active.")
+        else
+            print("|cFFFF0000Near|r Error: Could not create database connection.")
         end
-        
-        print("|cFF00FF00Near|r AzerothDB integration active.")
     else
         print("|cFFFF0000Near|r Warning: AzerothDB not found. Database features disabled.")
     end
@@ -150,11 +163,11 @@ local function GetNearbyEntities()
                 table.insert(entities, entityData)
                 
                 -- Store in AzerothDB if GUID exists
-                if guid and AzerothDB then
-                    local existing = AzerothDB:SelectByPK("nameplates", guid)
+                if guid and db then
+                    local existing = db:SelectByPK("nameplates", guid)
                     if existing then
                         -- Update existing entry
-                        AzerothDB:UpdateByPK("nameplates", guid, function(row)
+                        db:UpdateByPK("nameplates", guid, function(row)
                             row.name = name
                             row.unitType = unitType
                             row.level = UnitLevel(unit)
@@ -164,7 +177,7 @@ local function GetNearbyEntities()
                         end)
                     else
                         -- Insert new entry
-                        AzerothDB:Insert("nameplates", {
+                        db:Insert("nameplates", {
                             guid = guid,
                             name = name,
                             unitType = unitType,
@@ -987,15 +1000,15 @@ end
 
 -- Debug database slash command handler
 local function DebugDBSlashCommandHandler(msg)
-    if not AzerothDB then
-        print("|cFFFF0000[Near DB]|r AzerothDB not found!")
+    if not db then
+        print("|cFFFF0000[Near DB]|r AzerothDB connection not available!")
         return
     end
     
     print("|cFF00FF00=== Near Database Debug ===|r")
     
     -- Get all nameplate entries
-    local nameplates = AzerothDB:Select("nameplates")
+    local nameplates = db:Select("nameplates")
     local totalCount = #nameplates
     
     print(string.format("Total nameplates stored: |cFFFFFF00%d|r", totalCount))
@@ -1011,7 +1024,7 @@ local function DebugDBSlashCommandHandler(msg)
         end)
         
         -- Show statistics
-        local playerCount = AzerothDB:Count("nameplates", function(row)
+        local playerCount = db:Count("nameplates", function(row)
             return row.isPlayer == true
         end)
         local npcCount = totalCount - playerCount
@@ -1062,10 +1075,10 @@ local function DebugDBSlashCommandHandler(msg)
     msg = msg:lower():trim()
     
     if msg == "clear" then
-        AzerothDB:Clear("nameplates")
+        db:Clear("nameplates")
         print("|cFF00FF00[Near DB]|r Database cleared!")
     elseif msg == "players" then
-        local players = AzerothDB:Select("nameplates", function(row)
+        local players = db:Select("nameplates", function(row)
             return row.isPlayer == true
         end)
         print("|cFF00FF00[Near DB]|r Found " .. #players .. " players:")
@@ -1074,7 +1087,7 @@ local function DebugDBSlashCommandHandler(msg)
                 i, player.level or 0, player.name, player.seenCount or 1))
         end
     elseif msg == "npcs" then
-        local npcs = AzerothDB:Select("nameplates", function(row)
+        local npcs = db:Select("nameplates", function(row)
             return row.isPlayer ~= true
         end)
         print("|cFF00FF00[Near DB]|r Found " .. #npcs .. " NPCs:")
