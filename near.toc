@@ -2,7 +2,7 @@
 ## Title: Near
 ## Notes: Shows nearby enemies and players. Use /ne (enemies) or /nf (players) to toggle display frames.
 ## Author: x0ptr
-## Version: 1.0.0
+## Version: 1.0.1
 ## SavedVariables: NearDB
 
 near.lua
