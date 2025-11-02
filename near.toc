@@ -2,7 +2,7 @@
 ## Title: Near
 ## Notes: Shows nearby enemies and players. Use /ne (enemies) or /nf (players) to toggle display frames.
 ## Author: x0ptr <x0ptrr@gmail.com>
-## Version: 1.1.0
+## Version: 1.1.1
 ## X-Website: https://github.com/x0ptr/near
 ## Dependencies: AzerothDB
 ## SavedVariables: NearDB

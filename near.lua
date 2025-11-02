@@ -2,7 +2,7 @@
 -- Author: x0ptr
 
 local ADDON_NAME = "near"
-local VERSION = "1.1.0"
+local VERSION = "1.1.1"
 
 -- Saved variables
 NearDB = NearDB or {
