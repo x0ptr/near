@@ -28,6 +28,25 @@ local UPDATE_INTERVAL = 0.1 -- Update 10 times per second
 -- Initialize addon
 local function Initialize()
     print("|cFF00FF00Near|r " .. VERSION .. " loaded. Type |cFFFFFF00/ne|r (enemies) or |cFFFFFF00/nf|r (players).")
+    
+    -- Initialize AzerothDB tables
+    if AzerothDB then
+        -- Create nameplates table with GUID as primary key (only if it doesn't exist)
+        if not AzerothDB._tables["nameplates"] then
+            AzerothDB:CreateTable("nameplates", "guid")
+            AzerothDB:CreateIndex("nameplates", "name")
+            AzerothDB:CreateIndex("nameplates", "unitType")
+        end
+        
+        -- Create metadata table for tracking (only if it doesn't exist)
+        if not AzerothDB._tables["metadata"] then
+            AzerothDB:CreateTable("metadata", "key")
+        end
+        
+        print("|cFF00FF00Near|r AzerothDB integration active.")
+    else
+        print("|cFFFF0000Near|r Warning: AzerothDB not found. Database features disabled.")
+    end
 end
 
 -- Get nearby nameplates and entities
@@ -105,7 +124,10 @@ local function GetNearbyEntities()
             
             -- Store entity data
             if name then
-                table.insert(entities, {
+                -- Get GUID for database storage
+                local guid = UnitGUID(unit)
+                
+                local entityData = {
                     name = name,
                     type = unitType,
                     color = color,
@@ -121,8 +143,39 @@ local function GetNearbyEntities()
                     inRange = inRange,
                     isTargetingMe = isTargetingMe,
                     isMyTarget = isMyTarget,
-                    isPlayer = UnitIsPlayer(unit)
-                })
+                    isPlayer = UnitIsPlayer(unit),
+                    guid = guid
+                }
+                
+                table.insert(entities, entityData)
+                
+                -- Store in AzerothDB if GUID exists
+                if guid and AzerothDB then
+                    local existing = AzerothDB:SelectByPK("nameplates", guid)
+                    if existing then
+                        -- Update existing entry
+                        AzerothDB:UpdateByPK("nameplates", guid, function(row)
+                            row.name = name
+                            row.unitType = unitType
+                            row.level = UnitLevel(unit)
+                            row.isPlayer = UnitIsPlayer(unit)
+                            row.lastSeen = time()
+                            row.seenCount = (row.seenCount or 0) + 1
+                        end)
+                    else
+                        -- Insert new entry
+                        AzerothDB:Insert("nameplates", {
+                            guid = guid,
+                            name = name,
+                            unitType = unitType,
+                            level = UnitLevel(unit),
+                            isPlayer = UnitIsPlayer(unit),
+                            firstSeen = time(),
+                            lastSeen = time(),
+                            seenCount = 1
+                        })
+                    end
+                end
             end
         end
     end
@@ -932,6 +985,108 @@ local function DebugSlashCommandHandler(msg)
     print("=== End Debug ===")
 end
 
+-- Debug database slash command handler
+local function DebugDBSlashCommandHandler(msg)
+    if not AzerothDB then
+        print("|cFFFF0000[Near DB]|r AzerothDB not found!")
+        return
+    end
+    
+    print("|cFF00FF00=== Near Database Debug ===|r")
+    
+    -- Get all nameplate entries
+    local nameplates = AzerothDB:Select("nameplates")
+    local totalCount = #nameplates
+    
+    print(string.format("Total nameplates stored: |cFFFFFF00%d|r", totalCount))
+    print("-------------------------------------------")
+    
+    if totalCount == 0 then
+        print("|cFFFF0000No entries found.|r")
+        print("Scan some nameplates first!")
+    else
+        -- Sort by last seen (most recent first)
+        table.sort(nameplates, function(a, b)
+            return (a.lastSeen or 0) > (b.lastSeen or 0)
+        end)
+        
+        -- Show statistics
+        local playerCount = AzerothDB:Count("nameplates", function(row)
+            return row.isPlayer == true
+        end)
+        local npcCount = totalCount - playerCount
+        
+        print(string.format("Players: |cFF00FF00%d|r | NPCs: |cFFFFFF00%d|r", playerCount, npcCount))
+        print("-------------------------------------------")
+        
+        -- List all entries
+        for i, entry in ipairs(nameplates) do
+            local typeColor = entry.isPlayer and "|cFF00FFFF" or "|cFFFFFFFF"
+            local typeStr = entry.isPlayer and "Player" or "NPC"
+            local levelStr = entry.level and entry.level > 0 and "[" .. entry.level .. "] " or ""
+            local seenCount = entry.seenCount or 1
+            local lastSeenStr = ""
+            
+            if entry.lastSeen then
+                local elapsed = time() - entry.lastSeen
+                if elapsed < 60 then
+                    lastSeenStr = string.format(" (seen %ds ago)", elapsed)
+                elseif elapsed < 3600 then
+                    lastSeenStr = string.format(" (seen %dm ago)", math.floor(elapsed / 60))
+                else
+                    lastSeenStr = string.format(" (seen %dh ago)", math.floor(elapsed / 3600))
+                end
+            end
+            
+            print(string.format("%d. %s%s%s|r - %s%s | Seen: %dx%s",
+                i,
+                levelStr,
+                typeColor,
+                entry.name or "Unknown",
+                typeStr,
+                entry.unitType and " (" .. entry.unitType .. ")" or "",
+                seenCount,
+                lastSeenStr
+            ))
+        end
+        
+        print("-------------------------------------------")
+        print("|cFF808080Commands:|r")
+        print("  |cFFFFFF00/ndebugdb|r - Show this database info")
+        print("  |cFFFFFF00/ndebugdb clear|r - Clear all database entries")
+        print("  |cFFFFFF00/ndebugdb players|r - Show only players")
+        print("  |cFFFFFF00/ndebugdb npcs|r - Show only NPCs")
+    end
+    
+    -- Handle subcommands
+    msg = msg:lower():trim()
+    
+    if msg == "clear" then
+        AzerothDB:Clear("nameplates")
+        print("|cFF00FF00[Near DB]|r Database cleared!")
+    elseif msg == "players" then
+        local players = AzerothDB:Select("nameplates", function(row)
+            return row.isPlayer == true
+        end)
+        print("|cFF00FF00[Near DB]|r Found " .. #players .. " players:")
+        for i, player in ipairs(players) do
+            print(string.format("  %d. [%d] %s | Seen: %dx",
+                i, player.level or 0, player.name, player.seenCount or 1))
+        end
+    elseif msg == "npcs" then
+        local npcs = AzerothDB:Select("nameplates", function(row)
+            return row.isPlayer ~= true
+        end)
+        print("|cFF00FF00[Near DB]|r Found " .. #npcs .. " NPCs:")
+        for i, npc in ipairs(npcs) do
+            print(string.format("  %d. [%d] %s (%s) | Seen: %dx",
+                i, npc.level or 0, npc.name, npc.unitType or "Unknown", npc.seenCount or 1))
+        end
+    end
+    
+    print("|cFF00FF00=== End Database Debug ===|r")
+end
+
 -- Register slash commands
 SLASH_WOWNAMELIST1 = "/near"
 SlashCmdList["WOWNAMELIST"] = SlashCommandHandler
@@ -944,6 +1099,9 @@ SlashCmdList["WOWNAMELISTFRIENDLY"] = FriendlySlashCommandHandler
 
 SLASH_WOWNAMELISTDEBUG1 = "/ndebug"
 SlashCmdList["WOWNAMELISTDEBUG"] = DebugSlashCommandHandler
+
+SLASH_WOWNAMELISTDEBUGDB1 = "/ndebugdb"
+SlashCmdList["WOWNAMELISTDEBUGDB"] = DebugDBSlashCommandHandler
 
 -- OnUpdate handler for continuous updates
 local function OnUpdate(self, elapsed)
