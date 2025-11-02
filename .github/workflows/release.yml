@@ -1,0 +1,66 @@
+name: Create Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Get version from tag
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+      
+      - name: Create release directory
+        run: |
+          mkdir -p release/near
+          cp near.lua release/near/
+          cp near.toc release/near/
+          cp -r scripts release/near/
+      
+      - name: Create zip archive
+        run: |
+          cd release
+          zip -r near-${{ steps.get_version.outputs.VERSION }}.zip near
+          cd ..
+      
+      - name: Generate changelog
+        id: changelog
+        run: |
+          echo "CHANGELOG<<EOF" >> $GITHUB_OUTPUT
+          git log $(git describe --tags --abbrev=0 HEAD^)..HEAD --pretty=format:"- %s" >> $GITHUB_OUTPUT
+          echo "" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+      
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: release/near-${{ steps.get_version.outputs.VERSION }}.zip
+          body: |
+            ## Near ${{ steps.get_version.outputs.VERSION }}
+            
+            ${{ steps.changelog.outputs.CHANGELOG }}
+            
+            ### Installation
+            1. Download `near-${{ steps.get_version.outputs.VERSION }}.zip`
+            2. Extract to `World of Warcraft\_retail_\Interface\AddOns\`
+            3. Reload UI (`/reload`)
+            
+            ### Usage
+            - `/ne` - Toggle enemy display frame
+            - `/nf` - Toggle players display frame
+            - `/near` - List nearby entities
+            - `/near help` - Show all commands
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
